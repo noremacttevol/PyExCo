@@ -2,13 +2,13 @@
 # Defines the player classes using inheritance — same concept Daniel showed
 # with BlackJackPlayer and HumBlackJackPlayer.
 #
-# PokerPlayer = the base class (computer player behavior by default)
-# HumanPokerPlayer = child class — overrides the action method to take keyboard input
+# CmpPlayer = the base class (computer player behavior by default)
+# HmnPlayer = child class — overrides the action method to take keyboard input
 # The game manager can loop through all players and call .decide_action() on each
 # without caring which type they are. That's the polymorphism part.
 
 
-class PokerPlayer:
+class CmpPlayer:
     """Base player class — behaves as a computer opponent."""
 
     def __init__(self, name, chips=1000):
@@ -62,9 +62,9 @@ class PokerPlayer:
         return f"{self.name} (${self.chips})"
 
 
-class HumanPokerPlayer(PokerPlayer):
+class HmnPlayer(CmpPlayer):
     """
-    Human player — inherits everything from PokerPlayer.
+    Human player — inherits everything from CmpPlayer.
     Only overrides decide_action so the player gets to type their choice.
     """
 

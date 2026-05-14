@@ -2,7 +2,7 @@
 # Entry point for the Card Games app — Texas Hold'em edition.
 # Follows Daniel's 3-section layout: imports, main(), then call main().
 
-from holdem_manager import TexasHoldemManager
+from manager import TexasHoldemManager
 
 
 # ── SECTION 2: Main Function ──────────────────────────────────────────────────
@@ -13,7 +13,8 @@ def main():
 
     while app_on:
         print("")
-        print("  ~~~~~ CARD GAMES ~~~~~")
+        print("  ~~~~~ TOMBSTONE POKER ~~~~~")
+        print("  'Say when.' — Doc Holliday")
         print("")
         print("  1. Texas Hold'em")
         print("  2. Quit")
