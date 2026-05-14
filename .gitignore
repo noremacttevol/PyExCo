@@ -2,3 +2,12 @@ __pycache__/
 *.pyc
 *.pyo
 .DS_Store
+
+# local workflow files — not for repo
+FIRST_SESSION_PROMPT.md
+ANALOGY_LIBRARY.md
+OBSIDIAN_FRAMEWORK.md
+NOTE_TEMPLATE.md
+SETUP_GUIDE.md
+obsidian-notes-outbox/
+tools/
