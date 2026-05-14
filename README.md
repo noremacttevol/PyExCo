@@ -1,6 +1,6 @@
 # PyExCo — Python Coursework
 
-Cameron Lovett — DSDT, MLS-100 / MLS-101
+Cameron Lovett — DSDT, MLS-100 / MLS-102
 Instructor: Daniel Michalak
 
 ---
@@ -23,7 +23,7 @@ Variables, data types, functions, conditionals, loops, lists, dicts, file I/O.
 
 ---
 
-### Python 2 — MLS-101 (April – May 2026)
+### Python 2 — MLS-102 (April – May 2026)
 
 OOP: classes, `__init__`, `self`, inheritance, polymorphism, multi-file programs.
 
