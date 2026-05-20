@@ -24,6 +24,7 @@ class TexasHoldemManager:
         self.community_cards = []
         self.pot             = 0
         self.current_bet     = 0
+        self.btn_idx         = 0
 
     # ── SETUP ────────────────────────────────────────────────────────────────
 
@@ -96,61 +97,81 @@ class TexasHoldemManager:
 
     # ── BETTING ──────────────────────────────────────────────────────────────
 
-    def _betting_round(self, round_name, start_offset=0):
+    def _betting_round(self, round_name, current_bet=0, player_amounts=None, action_order=None):
         """
-        Run one full betting round. All active players act once.
-        start_offset shifts who acts first (pre-flop starts left of BB).
+        Run one betting round using an action queue.
+        After a raise, everyone else gets another turn at the new bet level.
+        action_order controls initial seat order; rebuilds after raises use self.players.
         """
         print(f"\n{'─'*50}")
         print(f"  {round_name.upper()}")
         print(f"{'─'*50}")
         self._show_community()
 
-        # After pre-flop: reset current bet so players can check for free
-        if round_name != "Pre-Flop":
-            self.current_bet = 0
-            for p in self.players:
-                p.current_bet = 0
+        # Track how much each player put in this round; seed with blind credits if given
+        amount_in = {p.name: 0 for p in self.players}
+        if player_amounts:
+            for name, amt in player_amounts.items():
+                if name in amount_in:
+                    amount_in[name] = amt
 
-        active = [p for p in self.players if not p.folded and p.chips >= 0]
+        active = [p for p in self.players if not p.folded and p.chips > 0]
         if len(active) <= 1:
             return
 
-        # Rotate starting position by offset
-        n = len(self.players)
-        order = [(start_offset + i) % n for i in range(n)]
+        # Use caller-supplied order for the initial queue; rebuild uses self.players after a raise
+        action_queue = [p for p in (action_order or self.players)
+                        if not p.folded and p.chips > 0]
 
-        for idx in order:
-            player = self.players[idx]
+        while action_queue:
+            player = action_queue.pop(0)
             if player.folded or player.chips <= 0:
                 continue
 
-            action  = player.decide_action(self.current_bet, self.pot, self.community_cards)
-            to_call = max(0, self.current_bet - player.current_bet)
+            to_call = max(0, current_bet - amount_in[player.name])
+            action  = player.decide_action(self.community_cards, current_bet, to_call, self.BIG_BLIND)
 
-            if action == "fold":
+            # Human raise returns ("raise", amount); AI raise returns the string "raise"
+            action_str = action[0] if isinstance(action, tuple) else action
+            raise_by   = action[1] if isinstance(action, tuple) else self.BIG_BLIND
+
+            if action_str == "fold":
                 player.folded = True
                 print(f"  {player.name} folds.")
 
-            elif action == "call":
+            elif action_str in ("call", "check"):
                 amount = min(to_call, player.chips)
-                player.chips      -= amount
-                player.current_bet += amount
-                self.pot           += amount
+                player.chips           -= amount
+                amount_in[player.name] += amount
+                player.current_bet     += amount
+                self.pot               += amount
                 if to_call == 0:
                     print(f"  {player.name} checks.")
+                elif amount < to_call:
+                    print(f"  {player.name} calls all-in ${amount_in[player.name]}. Pot: ${self.pot}")
+                elif amount < current_bet:
+                    print(f"  {player.name} calls ${current_bet} (adds ${amount}). Pot: ${self.pot}")
                 else:
-                    print(f"  {player.name} calls ${amount}.")
+                    print(f"  {player.name} calls ${current_bet}. Pot: ${self.pot}")
 
-            elif action == "raise":
-                min_raise = self.BIG_BLIND
-                total_to_put_in = to_call + min_raise
-                amount = min(total_to_put_in, player.chips)
-                player.chips      -= amount
-                player.current_bet += amount
-                self.current_bet   = player.current_bet
-                self.pot           += amount
-                print(f"  {player.name} raises. Pot is now ${self.pot}. Call: ${self.current_bet}.")
+            elif action_str == "raise":
+                new_bet  = current_bet + raise_by
+                total    = new_bet - amount_in[player.name]
+                amount   = min(total, player.chips)
+                player.chips           -= amount
+                amount_in[player.name] += amount
+                player.current_bet     += amount
+                current_bet             = amount_in[player.name]
+                self.current_bet        = current_bet
+                self.pot               += amount
+                print(f"  {player.name} raises to ${current_bet}. Pot: ${self.pot}.")
+
+                # Raise — everyone else gets another turn at the new bet level
+                action_queue = [p for p in self.players
+                                if not p.folded and p.chips > 0 and p is not player]
+
+            if len([p for p in self.players if not p.folded]) <= 1:
+                break
 
         print(f"\n  Pot after {round_name}: ${self.pot}")
 
@@ -192,7 +213,23 @@ class TexasHoldemManager:
         print("  NEW HAND")
         print(f"{'='*50}")
 
-        self._collect_blinds()
+        # Compute seat positions from btn_idx
+        n   = len(self.players)
+        btn = self.btn_idx % n
+        sb  = (btn + 1) % n
+        bb  = (btn + 2) % n
+
+        sb_player = self.players[sb]
+        bb_player = self.players[bb]
+        sb_amount = min(self.SMALL_BLIND, sb_player.chips)
+        bb_amount = min(self.BIG_BLIND,   bb_player.chips)
+        sb_player.chips -= sb_amount
+        bb_player.chips -= bb_amount
+        self.pot = sb_amount + bb_amount
+
+        print(f"\n  {sb_player.name} posts small blind  (${sb_amount})")
+        print(f"  {bb_player.name} posts big blind    (${bb_amount})")
+
         self._deal_hole_cards()
 
         # Show the human their hole cards
@@ -202,8 +239,24 @@ class TexasHoldemManager:
             for card in human.hand:
                 print(f"    {card}")
 
+        # Pre-flop order: UTG first, BB acts last
+        if n == 2:
+            preflop_order = [self.players[btn], self.players[bb]]
+        else:
+            utg = (bb + 1) % n
+            preflop_order = [self.players[(utg + i) % n] for i in range(n)]
+
+        # Post-flop order: SB first, BTN acts last
+        if n == 2:
+            postflop_order = [self.players[bb], self.players[btn]]
+        else:
+            postflop_order = [self.players[(sb + i) % n] for i in range(n)]
+
+        blinds = {sb_player.name: sb_amount, bb_player.name: bb_amount}
+
         # ── Pre-Flop ─────────────────────────────────────────────────────────
-        self._betting_round("Pre-Flop", start_offset=3)
+        self._betting_round("Pre-Flop", current_bet=bb_amount,
+                            player_amounts=blinds, action_order=preflop_order)
 
         active = [p for p in self.players if not p.folded]
         if len(active) == 1:
@@ -211,7 +264,7 @@ class TexasHoldemManager:
 
         # ── Flop (3 community cards) ─────────────────────────────────────────
         self._deal_community(3)
-        self._betting_round("Flop")
+        self._betting_round("Flop", action_order=postflop_order)
 
         active = [p for p in self.players if not p.folded]
         if len(active) == 1:
@@ -219,7 +272,7 @@ class TexasHoldemManager:
 
         # ── Turn (1 more community card) ─────────────────────────────────────
         self._deal_community(1)
-        self._betting_round("Turn")
+        self._betting_round("Turn", action_order=postflop_order)
 
         active = [p for p in self.players if not p.folded]
         if len(active) == 1:
@@ -227,7 +280,7 @@ class TexasHoldemManager:
 
         # ── River (final community card) ─────────────────────────────────────
         self._deal_community(1)
-        self._betting_round("River")
+        self._betting_round("River", action_order=postflop_order)
 
         active = [p for p in self.players if not p.folded]
         if len(active) == 1:
@@ -274,5 +327,5 @@ class TexasHoldemManager:
                 print("\n  Thanks for playing!")
                 break
 
-            # Rotate button (move player list so blinds rotate)
-            self.players.append(self.players.pop(0))
+            # Advance the button index so blinds rotate each hand
+            self.btn_idx = (self.btn_idx + 1) % len(self.players)

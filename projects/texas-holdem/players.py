@@ -42,49 +42,42 @@ class PokerPlayer:
             if self.best_hand_name:
                 print(f"    → {self.best_hand_name}")
 
-    def decide_action(self, current_bet, pot, community_cards):
+    def decide_action(self, community_cards, current_bet=0, to_call=0, min_raise=50):
         """
         Computer AI strategy.
-        Pre-flop: play tight — only strong hole cards.
-        Post-flop: evaluate current hand strength vs the board.
-        Returns: "fold" | "call" | "raise"
+        Post-flop: evaluate hand strength with HandEvaluator.
+        Pre-flop: simple hole-card strength rules.
+        Returns: "fold" | "call" | "check" | "raise"
         """
-        to_call = current_bet - self.current_bet
-
-        # Post-flop: can evaluate actual hand
+        # Post-flop: evaluate actual hand against the board
         if len(community_cards) >= 3 and len(self.hand) == 2:
             score, name, _ = HandEvaluator.best_hand(self.hand, community_cards)
-            hand_rank = score[0]   # 0=high card ... 8=straight flush
+            hand_rank = score[0]   # 0=high card … 8=straight flush
 
-            if hand_rank >= 5:        # Flush or better → raise
+            if hand_rank >= 5:    # Flush or better → raise
                 return "raise"
-            elif hand_rank >= 3:      # Three of a kind or better → call
-                return "call"
-            elif hand_rank == 2:      # Two pair → call if cheap
-                return "call" if to_call <= self.chips * 0.25 else "fold"
-            else:                     # Pair or worse → fold if it costs anything
-                return "call" if to_call == 0 else "fold"
+            elif hand_rank >= 3:  # Three of a kind or better → call/check
+                return "call" if to_call > 0 else "check"
+            elif hand_rank == 2:  # Two pair → call if cheap
+                return ("call" if to_call <= self.chips * 0.25 else "fold") if to_call > 0 else "check"
+            else:                 # Pair or worse → check for free, else fold
+                return "check" if to_call == 0 else "fold"
 
-        # Pre-flop: decide based on hole card strength only
+        # Pre-flop: decide on hole card strength only
         if len(self.hand) == 2:
-            v1 = self.hand[0].value
-            v2 = self.hand[1].value
-            high = max(v1, v2)
-            low  = min(v1, v2)
+            v1      = self.hand[0].value
+            v2      = self.hand[1].value
             is_pair = (v1 == v2)
+            high    = max(v1, v2)
 
-            if is_pair and high >= 10:       # High pocket pair (TT+) → raise
+            if is_pair and high >= 10:
                 return "raise"
-            elif is_pair:                    # Low pocket pair → call
-                return "call"
-            elif high == 14 and low >= 10:   # Ace + high card → raise
-                return "raise"
-            elif high >= 12:                 # King/Queen with anything → call
-                return "call"
-            else:                            # Weak hand → fold if costs anything
-                return "call" if to_call == 0 else "fold"
+            elif is_pair or high >= 12:
+                return "call" if to_call > 0 else "check"
+            else:
+                return "fold" if to_call > 0 else "check"
 
-        return "call"   # Safety fallback
+        return "check" if to_call == 0 else "call"
 
     def __repr__(self):
         status = " (folded)" if self.folded else ""
@@ -96,27 +89,67 @@ class PokerPlayer:
 class HumanPokerPlayer(PokerPlayer):
     """Human player — overrides decide_action to get input from the keyboard."""
 
-    def decide_action(self, current_bet, pot, community_cards):
-        to_call = current_bet - self.current_bet
-
+    def decide_action(self, community_cards, current_bet=0, to_call=0, min_raise=50):
         while True:
             print(f"\n  Your chips : ${self.chips}")
-            print(f"  Pot        : ${pot}")
             if to_call > 0:
-                print(f"  To call    : ${to_call}")
+                print(f"  Current bet: ${current_bet}   Your cost to call: ${to_call}")
+                raw = input("  Action (fold / call / raise [amount]): ").lower().strip()
+            elif current_bet > 0:
+                # BB option: already covered the big blind, no raise yet
+                print(f"  No raise yet — you are covered.")
+                raw = input("  Action (check / raise [amount] / fold): ").lower().strip()
             else:
-                print(f"  (You can check for free)")
+                print(f"  No bet yet — you can check for free.")
+                raw = input("  Action (check / raise [amount] / fold): ").lower().strip()
 
-            raw = input("  Action (fold / call / raise): ").lower().strip()
+            parts = raw.split(None, 1)
+            verb  = parts[0] if parts else ""
+            rest  = parts[1] if len(parts) > 1 else ""
 
-            if raw in ["fold", "f"]:
+            if verb in ["fold", "f"]:
                 return "fold"
-            elif raw in ["call", "call it", "c", "check", "ch"]:
+            elif verb in ["call", "call it", "c"]:
                 return "call"
-            elif raw in ["raise", "r", "bet", "b"]:
-                return "raise"
+            elif verb in ["check", "ch"]:
+                if to_call > 0:
+                    print(f"  Can't check — there's ${to_call} to call. Fold, call, or raise.")
+                else:
+                    return "call"
+            elif verb in ["raise", "r", "bet", "b"]:
+                amount = self._parse_raise(rest, min_raise)
+                if amount is not None:
+                    return ("raise", amount)
             else:
-                print("  Type: fold, call, or raise")
+                print("  Type fold, call, or raise." if to_call > 0 else "  Type check, raise, or fold.")
+
+    def _parse_raise(self, rest, min_raise):
+        """Parse a raise amount from inline text, or prompt if not provided."""
+        capped_min = min(min_raise, self.chips)
+        if rest:
+            raw = rest.replace("$", "").strip()
+            if raw in ["all", "allin", "all-in"]:
+                return self.chips
+            try:
+                amount = int(raw)
+                if capped_min <= amount <= self.chips:
+                    return amount
+                print(f"  Must be between ${capped_min} and ${self.chips}.")
+            except ValueError:
+                print("  Enter a number or 'all'.")
+            return None
+        else:
+            while True:
+                raw = input(f"  Raise by how much? (${capped_min}–${self.chips}, or 'all'): ").lower().strip()
+                if raw in ["all", "allin", "all-in"]:
+                    return self.chips
+                try:
+                    amount = int(raw)
+                    if capped_min <= amount <= self.chips:
+                        return amount
+                    print(f"  Must be between ${capped_min} and ${self.chips}.")
+                except ValueError:
+                    print("  Enter a number or 'all'.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -128,39 +161,38 @@ class ComputerPokerPlayer(PokerPlayer):
     Same concept as Daniel's HumBlackJackPlayer inheriting from BlackJackPlayer.
     """
 
-    def decide_action(self, current_bet, pot, community_cards):
+    def decide_action(self, community_cards, current_bet=0, to_call=0, min_raise=50):
         """More aggressive than base — raises more frequently with strong hands."""
-        to_call = current_bet - self.current_bet
-
+        # Post-flop: use hand evaluator
         if len(community_cards) >= 3 and len(self.hand) == 2:
             score, name, _ = HandEvaluator.best_hand(self.hand, community_cards)
             hand_rank = score[0]
 
-            if hand_rank >= 6:        # Full house or better → always raise
+            if hand_rank >= 6:    # Full house or better → raise
                 return "raise"
-            elif hand_rank >= 4:      # Straight or flush → raise
+            elif hand_rank >= 4:  # Straight or flush → raise
                 return "raise"
-            elif hand_rank >= 2:      # Two pair / three of a kind → call
-                return "call"
+            elif hand_rank >= 2:  # Two pair / three of a kind → call/check
+                return "call" if to_call > 0 else "check"
             else:
-                return "call" if to_call == 0 else "fold"
+                return "check" if to_call == 0 else "fold"
 
-        # Pre-flop
+        # Pre-flop: more aggressive thresholds
         if len(self.hand) == 2:
-            v1 = self.hand[0].value
-            v2 = self.hand[1].value
+            v1      = self.hand[0].value
+            v2      = self.hand[1].value
             is_pair = (v1 == v2)
-            high = max(v1, v2)
+            high    = max(v1, v2)
 
-            if is_pair and high >= 8:       # 8s or better → raise
+            if is_pair and high >= 8:    # 8s or better → raise
                 return "raise"
             elif is_pair:
-                return "call"
-            elif high == 14:                # Any Ace → raise
+                return "call" if to_call > 0 else "check"
+            elif high == 14:             # Any Ace → raise
                 return "raise"
-            elif high >= 11:               # Jack or better → call
-                return "call"
+            elif high >= 11:             # Jack or better → call/check
+                return "call" if to_call > 0 else "check"
             else:
-                return "call" if to_call == 0 else "fold"
+                return "fold" if to_call > 0 else "check"
 
-        return "call"
+        return "check" if to_call == 0 else "call"
